@@ -1,4 +1,7 @@
+import logging
 import os
+
+logging.basicConfig()
 
 from browser_use import Agent, Browser, BrowserConfig
 from langchain_google_genai import ChatGoogleGenerativeAI  # noqa
