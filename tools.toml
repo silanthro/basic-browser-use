@@ -1,0 +1,7 @@
+[index]
+
+description = "Basic Browser Use tool"
+
+tools = [
+    "basic_browser_use.run_browser_agent",
+]
