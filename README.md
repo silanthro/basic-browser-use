@@ -1,4 +1,4 @@
-# basic-browser-use
+# basic-browser-use (WIP)
 
 A very basic tool employing Browser Use.
 
