@@ -2,6 +2,8 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
+import sys
 import warnings
 from typing import Any
 
@@ -13,6 +15,17 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from preprocessor import PreprocessLLM
 
 warnings.filterwarnings("ignore")
+
+logger = logging.getLogger("silanthro/basic-browser-use")
+
+
+def ensure_playwright_chromium():
+    subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"])
+    logger.info("Chromium is ready.")
+
+
+# TODO: Consider setting up an init script for stores
+ensure_playwright_chromium()
 
 
 async def run_browser_agent(task: str) -> str:
