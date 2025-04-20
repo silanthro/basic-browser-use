@@ -8,3 +8,8 @@ dependencies = [
     "browser-use==0.1.40",
     "langchain-google-genai==2.1.2",
 ]
+
+
+[tool.setuptools]
+py-modules = ["basic_browser_use", "preprocessor"]
+

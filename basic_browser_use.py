@@ -10,6 +10,7 @@ logging.basicConfig()
 from browser_use import Agent, Browser, BrowserConfig
 from langchain_core.callbacks import BaseCallbackHandler, CallbackManager
 from langchain_google_genai import ChatGoogleGenerativeAI
+from preprocessor import PreprocessLLM
 
 warnings.filterwarnings("ignore")
 
@@ -47,7 +48,6 @@ def safe_create_task(coro):
         loop = asyncio.get_running_loop()
         loop.create_task(coro)
     except RuntimeError:
-        # fallback for no running loop (rare but possible)
         asyncio.run(coro)
 
 
@@ -99,7 +99,7 @@ async def stream_browser_agent(task: str):
         browser = Browser(config)
         agent = Agent(
             task=task,
-            llm=llm,
+            llm=PreprocessLLM(llm),
             use_vision=False,
             browser=browser,
         )
