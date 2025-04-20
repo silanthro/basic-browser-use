@@ -64,14 +64,14 @@ async def stream_browser_agent(task: str):
     """
 
     final_result_future = asyncio.Future()
-    memory_queue = asyncio.Queue()
+    metadata_queue = asyncio.Queue()
 
-    async def memory_stream():
+    async def metadata_stream():
         while True:
-            memory = await memory_queue.get()
-            if memory is None:
+            metadata = await metadata_queue.get()
+            if metadata is None:
                 break
-            yield memory
+            yield metadata
 
     class ContextCallbackHandler(BaseCallbackHandler):
         def on_llm_end(self, response, **kwargs: Any) -> None:
@@ -81,9 +81,7 @@ async def stream_browser_agent(task: str):
                     "arguments", "{}"
                 )
                 metadata = json.loads(metadata_str)
-                # I want to yield this
-                memory = metadata.get("current_state", {}).get("memory")
-                safe_create_task(memory_queue.put(memory))
+                safe_create_task(metadata_queue.put(metadata))
 
     async def run_agent():
         callback_handler = ContextCallbackHandler()
@@ -106,12 +104,12 @@ async def stream_browser_agent(task: str):
 
         history = await agent.run()
         final_result_future.set_result(history.final_result())
-        await memory_queue.put(None)  # stop signal
+        await metadata_queue.put(None)  # stop signal
 
     asyncio.create_task(run_agent())
 
-    async for memory in memory_stream():
-        yield {"type": "memory", "data": memory}
+    async for metadata in metadata_stream():
+        yield {"type": "metadata", "data": metadata}
 
     final_result = await final_result_future
     yield {"type": "result", "data": final_result}
