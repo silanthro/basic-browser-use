@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import warnings
@@ -86,7 +87,52 @@ async def stream_browser_agent(task: str):
                 break
             yield metadata
 
+    ACTIONS = []
+    ACTION_RESULTS = []
+
     class ContextCallbackHandler(BaseCallbackHandler):
+        def on_llm_start(
+            self, serialized: dict[str, Any], prompts: list[str], **kwargs: Any
+        ) -> None:
+            content = prompts[0]
+            actions_rgx = re.compile(
+                "\\[Your task history memory starts here\\](?P<actions>.*?)\\[Task history memory ends\\]",
+                re.DOTALL,
+            )
+            action_result_rgx = re.compile(
+                "Action result:(?P<result>.*?)\n(AI|Human):", re.DOTALL
+            )
+            current_url_rgx = re.compile(
+                "Current url: (?P<url>.*?)\nAvailable tabs:", re.DOTALL
+            )
+
+            # Get current URL
+            url_match = current_url_rgx.search(content)
+            url = None
+            if url_match:
+                url = url_match.groupdict().get("url")
+
+            # Get action results if any
+            match = actions_rgx.search(content)
+            latest_results = []
+            if match:
+                raw_actions = match.groupdict().get("actions")
+                matches = action_result_rgx.findall(raw_actions)
+                for match in matches:
+                    latest_results.append(match[0].strip())
+            if len(latest_results) > len(ACTION_RESULTS):
+                ACTION_RESULTS.append(latest_results[-1])
+                # Queue action with corresponding result
+                safe_create_task(
+                    metadata_queue.put(
+                        {
+                            "action": ACTIONS[-1],
+                            "result": latest_results[-1],
+                            "url": url,
+                        }
+                    )
+                )
+
         def on_llm_end(self, response, **kwargs: Any) -> None:
             additional_kwargs = response.generations[0][0].message.additional_kwargs
             if additional_kwargs:
@@ -94,6 +140,10 @@ async def stream_browser_agent(task: str):
                     "arguments", "{}"
                 )
                 metadata = json.loads(metadata_str)
+                action = metadata.get("action")
+                if action:
+                    # Action will be {<action_name_str>: <args dict>}
+                    ACTIONS.append(action[0])
                 safe_create_task(metadata_queue.put(metadata))
 
     async def run_agent():
