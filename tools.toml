@@ -5,4 +5,5 @@ description = "Basic Browser Use tool"
 tools = [
     "basic_browser_use.run_browser_agent",
     "basic_browser_use.stream_browser_agent",
+    "basic_browser_use.stream_browser_agent_gui",
 ]

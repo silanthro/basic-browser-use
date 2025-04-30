@@ -11,6 +11,7 @@ from typing import Any
 logging.basicConfig()
 
 from browser_use import Agent, Browser, BrowserConfig
+from browser_use.browser.context import BrowserContext, BrowserContextConfig
 from langchain_core.callbacks import BaseCallbackHandler, CallbackManager
 from langchain_google_genai import ChatGoogleGenerativeAI
 from preprocessor import PreprocessLLM
@@ -65,32 +66,11 @@ def safe_create_task(coro):
         asyncio.run(coro)
 
 
-async def stream_browser_agent(task: str):
-    """
-    Do research on the Internet via a browser-based agent
-    Ignore this if run_browser_agent is available
-
-    Args:
-    - task (str): Task for the agent to fulfill
-
-    Returns:
-        A generator that yields messages corresponding to the progress on the task
-    """
-
-    final_result_future = asyncio.Future()
-    metadata_queue = asyncio.Queue()
-
-    async def metadata_stream():
-        while True:
-            metadata = await metadata_queue.get()
-            if metadata is None:
-                break
-            yield metadata
-
-    ACTIONS = []
-    ACTION_RESULTS = []
-
+def get_context_callback_handler(metadata_queue):
     class ContextCallbackHandler(BaseCallbackHandler):
+        _actions = []
+        _action_results = []
+
         def on_llm_start(
             self, serialized: dict[str, Any], prompts: list[str], **kwargs: Any
         ) -> None:
@@ -120,13 +100,13 @@ async def stream_browser_agent(task: str):
                 matches = action_result_rgx.findall(raw_actions)
                 for match in matches:
                     latest_results.append(match[0].strip())
-            if len(latest_results) > len(ACTION_RESULTS):
-                ACTION_RESULTS.append(latest_results[-1])
+            if len(latest_results) > len(self._action_results):
+                self._action_results.append(latest_results[-1])
                 # Queue action with corresponding result
                 safe_create_task(
                     metadata_queue.put(
                         {
-                            "action": ACTIONS[-1],
+                            "action": self._actions[-1],
                             "result": latest_results[-1],
                             "url": url,
                         }
@@ -143,11 +123,29 @@ async def stream_browser_agent(task: str):
                 action = metadata.get("action")
                 if action:
                     # Action will be {<action_name_str>: <args dict>}
-                    ACTIONS.append(action[0])
+                    self._actions.append(action[0])
                 safe_create_task(metadata_queue.put(metadata))
 
+    return ContextCallbackHandler()
+
+
+async def stream_browser_agent(task: str):
+    """
+    Do research on the Internet via a browser-based agent
+    Ignore this if run_browser_agent is available
+
+    Args:
+    - task (str): Task for the agent to fulfill
+
+    Returns:
+        A generator that yields messages corresponding to the progress on the task
+    """
+
+    final_result_future = asyncio.Future()
+    metadata_queue = asyncio.Queue()
+
     async def run_agent():
-        callback_handler = ContextCallbackHandler()
+        callback_handler = get_context_callback_handler(metadata_queue)
         callback_manager = CallbackManager([callback_handler])
 
         llm = ChatGoogleGenerativeAI(
@@ -171,7 +169,70 @@ async def stream_browser_agent(task: str):
 
     asyncio.create_task(run_agent())
 
-    async for metadata in metadata_stream():
+    while True:
+        metadata = await metadata_queue.get()
+        if metadata is None:
+            break
+        yield {"type": "metadata", "data": metadata}
+
+    final_result = await final_result_future
+    yield {"type": "result", "data": final_result}
+
+
+async def stream_browser_agent_gui(task: str):
+    """
+    Do research on the Internet via a browser-based agent with a GUI-based browser
+    Some websites detect and block headless traffic, which can be mitigated with a GUI-based browser
+    Because this opens a GUI browser, this should be used only if stream_browser_agent is unsuccessful
+    and always ask for user permission to open a GUI browser before running this
+    Ignore this if run_browser_agent is available
+
+    Args:
+    - task (str): Task for the agent to fulfill
+
+    Returns:
+        A generator that yields messages corresponding to the progress on the task
+    """
+
+    final_result_future = asyncio.Future()
+    metadata_queue = asyncio.Queue()
+
+    async def run_agent():
+        callback_handler = get_context_callback_handler(metadata_queue)
+        callback_manager = CallbackManager([callback_handler])
+
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-2.0-flash-001",
+            api_key=os.getenv("GEMINI_API_KEY"),
+            callback_manager=callback_manager,
+        )
+
+        config = BrowserConfig(headless=False, disable_security=False)
+        browser = Browser(config)
+        context_config = BrowserContextConfig(
+            browser_window_size={"width": 640, "height": 480},
+            highlight_elements=False,
+        )
+        context = BrowserContext(browser=browser, config=context_config)
+        agent = Agent(
+            task=task,
+            llm=PreprocessLLM(llm),
+            use_vision=False,
+            browser_context=context,
+            browser=browser,
+        )
+
+        history = await agent.run()
+        final_result_future.set_result(history.final_result())
+        await browser.close()
+        await metadata_queue.put(None)  # stop signal
+
+    asyncio.create_task(run_agent())
+
+    while True:
+        metadata = await metadata_queue.get()
+        if metadata is None:
+            break
         yield {"type": "metadata", "data": metadata}
 
     final_result = await final_result_future
